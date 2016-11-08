@@ -2,8 +2,13 @@
 
 namespace LastFmApi\Api;
 
+use LastFmApi\Exception\ApiFailedException;
+use LastFmApi\Exception\CacheException;
+use LastFmApi\Exception\ConnectionException;
+use LastFmApi\Exception\InvalidArgumentException;
 use LastFmApi\Lib\Socket;
 use LastFmApi\Lib\Cache;
+use LastFmApi\Lib\ApiUtils;
 use \SimpleXMLElement;
 
 /**
@@ -15,6 +20,7 @@ use \SimpleXMLElement;
  */
 class BaseApi
 {
+    use ApiUtils;
     /*
      * Stores error details
      * @access public
@@ -88,18 +94,16 @@ class BaseApi
         }
 
         if (is_object($auth)) {
-            if (!empty($auth->apiKey) && !empty($auth->secret) && !empty($auth->username) && !empty($auth->sessionKey) && ($auth->subscriber == 0 || $auth->subscriber == 1)) {
+            if (!empty($auth->apiKey) && !empty($auth->apiSecret) && !empty($auth->username) && !empty($auth->sessionKey) && ($auth->subscriber == 0 || $auth->subscriber == 1)) {
                 $this->fullAuth = true;
             } elseif (!empty($auth->apiKey)) {
                 $this->fullAuth = false;
             } else {
-                $this->handleError(91, 'Invalid auth class was passed to lastfmApi. You need to have at least an apiKey set');
-                return false;
+                throw new InvalidArgumentException('Invalid auth class was passed to lastfmApi. You need to have at least an apiKey set');
             }
             $this->auth = $auth;
         } else {
-            $this->handleError(91, 'You need to pass a lastfmApiAuth class as the first variable to this class');
-            return false;
+            throw new InvalidArgumentException('You need to pass a lastfmApiAuth class as the first variable to this class');
         }
     }
 
@@ -131,44 +135,6 @@ class BaseApi
     }
 
     /*
-     * Used to return the correct package to allow access to the api calls for that package
-     * @deprecated
-     * @access public
-     * @return class
-     */
-
-    public function getPackage($auth, $package, $config = '')
-    {
-        if ($config == '') {
-            $config = array(
-                'enabled' => false
-            );
-        }
-
-        if (is_object($auth)) {
-            if (!empty($auth->apiKey) && !empty($auth->secret) && !empty($auth->username) && !empty($auth->sessionKey) && ($auth->subscriber == 0 || $auth->subscriber == 1)) {
-                $fullAuth = 1;
-            } elseif (!empty($auth->apiKey)) {
-                $fullAuth = 0;
-            } else {
-                $this->handleError(91, 'Invalid auth class was passed to lastfmApi. You need to have at least an apiKey set');
-                return false;
-            }
-        } else {
-            $this->handleError(91, 'You need to pass a lastfmApiAuth class as the first variable to this class');
-            return false;
-        }
-
-        if ($package == 'album' || $package == 'artist' || $package == 'event' || $package == 'geo' || $package == 'group' || $package == 'library' || $package == 'playlist' || $package == 'radio' || $package == 'tag' || $package == 'tasteometer' || $package == 'track' || $package == 'user' || $package == 'venue') {
-            $className = 'lastfmApi' . ucfirst($package);
-            return new $className($auth, $fullAuth, $config);
-        } else {
-            $this->handleError(91, 'The package name you past was invalid');
-            return false;
-        }
-    }
-
-    /*
      * Setup the socket to get the raw api call return
      * @access private
      * @return boolean
@@ -185,8 +151,7 @@ class BaseApi
             $this->connected = 1;
             return true;
         } else {
-            $this->handleError(99, $this->socket->error_string);
-            return false;
+            throw new ConnectionException($this->socket->error_string);
         }
     }
 
@@ -196,7 +161,7 @@ class BaseApi
      * @return object
      */
 
-    private function process_response()
+    private function processResponse()
     {
         $xmlstr = '';
         $record = 0;
@@ -205,36 +170,25 @@ class BaseApi
                 $xmlstr .= $line;
             } elseif (substr($line, 0, 1) == '<') {
                 $record = 1;
-            } elseif (preg_match('/^HTTP\/1.[0-9]{1} ([4-9]{1}[0-9]{2}.*)/', $line, $matches)) {
-                $this->handleError(99, $this->host . ': Service not available (' . trim($matches[1]) . ')');
-                return;
+            } elseif (preg_match('/^HTTP\/1.[0-9]{1} ([5-9]{1}[0-9]{2}.*)/', $line, $matches)) {
+
+                throw new ConnectionException($this->host . ': Service not available (' . trim($matches[1]) . ')');
             }
         }
-
         try {
             libxml_use_internal_errors(true);
             $xml = new SimpleXMLElement($xmlstr);
-        } catch (Exception $e) {
-            // Crap! We got errors!!!
-            $errors = libxml_get_errors();
-            $errorMessage = '';
-            if (is_array($errors) && sizeof($errors)) { //array can be empty
-                $error = $errors[0];
-                $errorMessage = $error->message;
-            }
-            $this->handleError(95, 'SimpleXMLElement error: ' . $e->getMessage() . ': ' . $errorMessage);
-        }
+        } catch (\Exception $error) {
 
-        if (!isset($e)) {
+            throw new ConnectionException($error->getMessage());
+        }
+        if((string)$xml->attributes()->status === 'failed' )
+        {
+            throw new ApiFailedException($xml->error, intval($xml->error['code']));
+        }
+        if (!isset($error)) {
             // All is well :)
             return $xml;
-            /* return filter_var_array(
-              (array) $xml,
-              array(
-              'filter' => FILTER_SANITIZE_STRING,
-              'flags' => FILTER_FLAG_STRIP_HIGH
-              )
-              ); */
         }
     }
 
@@ -250,8 +204,7 @@ class BaseApi
         if ($this->connected == 1) {
             $this->cache = new Cache($this->config);
             if (!empty($this->cache->error)) {
-                $this->handleError(96, $this->cache->error);
-                return false;
+                throw new CacheException($this->cache->error);
             } else {
                 if ($cache = $this->cache->get($vars)) {
                     // Cache exists
@@ -272,7 +225,7 @@ class BaseApi
                     $this->cache->set($vars, $this->response);
                 }
 
-                return $this->process_response();
+                return $this->processResponse();
             }
         } else {
             return false;
@@ -305,53 +258,9 @@ class BaseApi
             $out .= $data . "\r\n";
             $this->response = $this->socket->send($out, 'array');
 
-            return $this->process_response();
+            return $this->processResponse();
         } else {
             return false;
         }
     }
-
-    /*
-     * Processes and error and writes to the public variable $error
-     * @access protected
-     * @return void
-     */
-
-    protected function handleError($error = '', $customDesc = '')
-    {
-        if (!empty($error) && is_object($error)) {
-            // Fail with error code
-            $this->error['code'] = $error['code'];
-            $this->error['desc'] = $error;
-        } elseif (!empty($error) && is_numeric($error)) {
-            // Fail with custom error code
-            $this->error['code'] = $error;
-            $this->error['desc'] = $customDesc;
-        } else {
-            //Hard failure
-            $this->error['code'] = 0;
-            $this->error['desc'] = 'Unknown error';
-        }
-    }
-
-    /*
-     * Generates the api signature for use in api calls that require write access
-     * @access protected
-     * @return string
-     */
-
-    protected function apiSig($secret, $vars)
-    {
-        ksort($vars);
-
-        $sig = '';
-        foreach ($vars as $name => $value) {
-            $sig .= $name . $value;
-        }
-        $sig .= $secret;
-        $sig = md5($sig);
-
-        return $sig;
-    }
-
 }

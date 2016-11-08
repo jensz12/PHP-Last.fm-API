@@ -2,6 +2,8 @@
 
 namespace LastFmApi\Api;
 
+use LastFmApi\Exception\InvalidArgumentException;
+
 /**
  * File that stores api calls for getting authentication values
  */
@@ -9,9 +11,8 @@ namespace LastFmApi\Api;
 /**
  * Allows access to the api requests relating to authentication
  */
-class AuthApi
+class AuthApi extends BaseApi
 {
-
     /**
      * Stores the api key
      * @access public
@@ -24,7 +25,7 @@ class AuthApi
      * @access public
      * @var string
      */
-    public $secret;
+    public $apiSecret;
 
     /**
      * Stores the authenticated username
@@ -64,40 +65,36 @@ class AuthApi
     public function __construct($method, $vars)
     {
         if ($method == 'getsession') {
-            if (!empty($vars['apiKey']) && !empty($vars['secret']) && !empty($vars['token'])) {
+            if (!empty($vars['apiKey']) && !empty($vars['apiSecret']) && !empty($vars['token'])) {
                 $this->apiKey = $vars['apiKey'];
-                $this->secret = $vars['secret'];
+                $this->apiSecret = $vars['apiSecret'];
                 $this->token = $vars['token'];
                 $this->getSession();
             } else {
-                $this->handleError(91, 'Must send an apiKey, token and a secret in the call for getsession');
-                return false;
+                throw new InvalidArgumentException('Must send an apiKey, token and a secret in the call for getsession');
             }
         } elseif ($method == 'gettoken') {
-            if (!empty($vars['apiKey']) && !empty($vars['secret'])) {
+            if (!empty($vars['apiKey']) && !empty($vars['apiSecret'])) {
                 $this->apiKey = $vars['apiKey'];
-                $this->secret = $vars['secret'];
+                $this->apiSecret = $vars['apiSecret'];
                 $this->getToken();
             } else {
-                $this->handleError(91, 'Must send an apiKey and a secret in the call for gettoken');
-                return false;
+                throw new InvalidArgumentException('Must send an apiKey and a secret in the call for gettoken');
             }
         } elseif ($method == 'setsession') {
             if (!empty($vars['apiKey'])) {
                 $this->apiKey = $vars['apiKey'];
-                if (!empty($vars['secret']) && !empty($vars['username']) && !empty($vars['sessionKey']) && isset($vars['subscriber'])) {
-                    $this->secret = $vars['secret'];
+                if (!empty($vars['apiSecret']) && !empty($vars['username']) && !empty($vars['sessionKey']) && isset($vars['subscriber'])) {
+                    $this->apiSecret = $vars['apiSecret'];
                     $this->username = $vars['username'];
                     $this->sessionKey = $vars['sessionKey'];
                     $this->subscriber = $vars['subscriber'];
                 }
             } else {
-                $this->handleError(91, 'Must send an apiKey, secret, usernamne, subcriber and sessionKey in the call for setsession');
-                return false;
+                throw new InvalidArgumentException('Must send an apiKey, secret, usernamne, subcriber and sessionKey in the call for setsession');
             }
         } else {
-            $this->handleError(91, 'Incorrect use of method variable ("getsession" or "setsession")');
-            return false;
+            throw new InvalidArgumentException('Incorrect use of method variable ("getsession" or "setsession")');
         }
     }
 
@@ -109,11 +106,11 @@ class AuthApi
     private function getSession()
     {
         $vars = array(
-            'method' => 'auth.getsession',
+            'method' => 'auth.getSession',
             'api_key' => $this->apiKey,
             'token' => $this->token
         );
-        $sig = $this->apiSig($this->secret, $vars);
+        $sig = $this->apiSig($this->apiSecret, $vars);
         $vars['api_sig'] = $sig;
 
         if ($call = $this->apiGetCall($vars)) {
@@ -133,18 +130,17 @@ class AuthApi
     private function getToken()
     {
         $vars = array(
-            'method' => 'auth.gettoken',
+            'method' => 'auth.getToken',
             'api_key' => $this->apiKey
         );
 
-        $sig = $this->apiSig($this->secret, $vars);
+        $sig = $this->apiSig($this->apiSecret, $vars);
         $vars['api_sig'] = $sig;
 
         if ($call = $this->apiGetCall($vars)) {
-            $this->token = (string) $call->token;
+            $this->token = $call->token;
         } else {
             return false;
         }
     }
-
 }
